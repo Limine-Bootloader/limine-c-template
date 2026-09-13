@@ -7,6 +7,9 @@
 // They must be implemented as the C specification mandates.
 // DO NOT remove or rename these functions, or stuff will eventually break!
 
+#ifdef memcpy
+#  undef memcpy
+#endif
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     uint8_t *pdest = dest;
     const uint8_t *psrc = src;
@@ -18,6 +21,9 @@ void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     return dest;
 }
 
+#ifdef memset
+#  undef memset
+#endif
 void *memset(void *s, int c, size_t n) {
     uint8_t *p = s;
 
@@ -28,6 +34,9 @@ void *memset(void *s, int c, size_t n) {
     return s;
 }
 
+#ifdef memmove
+#  undef memmove
+#endif
 void *memmove(void *dest, const void *src, size_t n) {
     uint8_t *pdest = dest;
     const uint8_t *psrc = src;
@@ -45,6 +54,9 @@ void *memmove(void *dest, const void *src, size_t n) {
     return dest;
 }
 
+#ifdef memcmp
+#  undef memcmp
+#endif
 int memcmp(const void *s1, const void *s2, size_t n) {
     const uint8_t *p1 = s1;
     const uint8_t *p2 = s2;
