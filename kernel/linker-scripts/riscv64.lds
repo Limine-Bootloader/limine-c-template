@@ -9,10 +9,10 @@ ENTRY(kmain)
 /* process. */
 PHDRS
 {
-    limine_requests PT_LOAD;
-    text PT_LOAD;
-    rodata PT_LOAD;
-    data PT_LOAD;
+    limine_requests PT_LOAD FLAGS(0x06); /* Read, write */
+    text PT_LOAD FLAGS(0x05); /* Read, execute */
+    rodata PT_LOAD FLAGS(0x04); /* Read */
+    data PT_LOAD FLAGS(0x06); /* Read, write */
 }
 
 SECTIONS
@@ -71,8 +71,10 @@ SECTIONS
     } :data
 
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
+    /* Also discard .riscv.attributes, as linkers add a program header for it. */
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
+        *(.riscv.attributes)
     }
 }

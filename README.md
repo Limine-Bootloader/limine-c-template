@@ -29,6 +29,13 @@ or:
 make TOOLCHAIN_PREFIX=x86_64-elf-
 ```
 
+The kernel is linked through the compiler driver, using its default linker for GCC and LLD for Clang. A different linker can be picked by adding a `-fuse-ld=` option to `LDFLAGS`.
+
+Link-time optimisation can be enabled by adding `-flto` to `CFLAGS`, for example:
+```
+make CFLAGS='-g -O2 -pipe -flto'
+```
+
 ### Architectural targets
 
 The `ARCH` make variable determines the target architecture to build the kernel and image for.
