@@ -61,6 +61,14 @@ ifneq ($(filter-out clean distclean,$(or $(MAKECMDGOALS),default)),)
     endif
 endif
 
+# Stop on a problem the checks below find, unless only cleaning, which needs
+# no toolchain.
+ifneq ($(filter-out clean distclean,$(or $(MAKECMDGOALS),default)),)
+    override TOOLCHAIN_ERROR = $(error $(1))
+else
+    override TOOLCHAIN_ERROR =
+endif
+
 # Check if CC is Clang.
 override CC_IS_CLANG := $(shell ! $(CC) --version 2>/dev/null | grep -q '^Target: '; echo $$?)
 
@@ -87,7 +95,7 @@ override CC_HAS_LINK_FLAG = $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) $(1) -Wl
 
 # Check if the linker supports a flag by searching its help, as older GNU
 # ld take unknown flags for different ones (-no-pie for -n -o -pie).
-override LD_HAS_FLAG = $(shell ! $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--help 2>/dev/null | grep -qE '(^|[[:space:]])-?$(1)([[:space:],=[]|$$)'; echo $$?)
+override LD_HAS_FLAG = $(shell ! LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--help 2>/dev/null | grep -qE '(^|[[:space:]])-?$(1)([[:space:],=[]|$$)'; echo $$?)
 
 # Internal C flags that should not be changed by the user.
 override CFLAGS += \
@@ -136,16 +144,73 @@ ifeq ($(CC_IS_CLANG),1)
         $(LDFLAGS)
 endif
 
+# Internal linker flags that should not be changed by the user.
+override LDFLAGS += \
+    -nostdlib \
+    -static \
+    -Wl,-z,max-page-size=0x1000 \
+    -Wl,-z,noexecstack \
+    -Wl,--gc-sections \
+    -Wl,-T,linker-scripts/$(ARCH).lds
+
+# Architecture specific internal flags.
+ifeq ($(ARCH),x86_64)
+    override CFLAGS += \
+        -m64 \
+        -march=x86-64 \
+        -mno-mmx \
+        -mno-sse \
+        -mno-red-zone \
+        -mcmodel=kernel
+    override LDFLAGS += \
+        -Wl,-m,elf_x86_64
+    override NASMFLAGS := \
+        -f elf64 \
+        $(NASMFLAGS)
+endif
+ifeq ($(ARCH),aarch64)
+    override CFLAGS += \
+        -mcpu=generic \
+        -march=armv8-a+nofp+nosimd \
+        -mcmodel=small
+    override LDFLAGS += \
+        -Wl,-m,aarch64elf
+endif
+ifeq ($(ARCH),riscv64)
+    # The ABI comes first, as the instruction set is checked against it.
+    override CFLAGS += \
+        -mabi=lp64
+    override LDFLAGS += \
+        -Wl,-m,elf64lriscv \
+        -Wl,--no-relax
+endif
+ifeq ($(ARCH),loongarch64)
+    # -msoft-float, unlike -mfpu=none, also overrides a -mdouble-float or
+    # -msingle-float in CFLAGS, which take effect wherever they appear.
+    override CFLAGS += \
+        -mabi=lp64s \
+        -march=loongarch64 \
+        -msoft-float
+    override LDFLAGS += \
+        -Wl,-m,elf64loongarch \
+        -Wl,--no-relax
+endif
+
 # Check that the compiler works with the given flags, as the checks below
 # would otherwise blame a missing feature.
 override CC_COMPILE_ERROR := $(shell LC_ALL=C $(CC) $(CFLAGS) -c -x c /dev/null -o /dev/null 2>&1 >/dev/null | grep -i 'error:' | head -n 1)
 ifneq ($(CC_COMPILE_ERROR),)
-    $(error The compiler does not work with the given CFLAGS: $(CC_COMPILE_ERROR))
+    $(call TOOLCHAIN_ERROR,The compiler does not work with the given CFLAGS: $(CC_COMPILE_ERROR))
 endif
 
-ifeq ($(call CC_HAS_COMPILE_FLAG,-fno-stack-clash-protection),1)
-    override CFLAGS += \
-        -fno-stack-clash-protection
+# Check that the compiler emits ELF objects. Go by the macro for ELF targets,
+# as GNU as cannot write an object to standard output. Clang is given an ELF
+# target, and before version 17 did not define the macro for all of them.
+ifneq ($(CC_IS_CLANG),1)
+    override CC_EMITS_ELF := $(shell ! $(CC) $(CFLAGS) -dM -E -x c /dev/null 2>/dev/null | grep -q 'define __ELF__ 1'; echo $$?)
+    ifneq ($(CC_EMITS_ELF),1)
+        $(call TOOLCHAIN_ERROR,The compiler does not emit ELF objects)
+    endif
 endif
 
 ifeq ($(CC_IS_CLANG),1)
@@ -173,7 +238,7 @@ ifeq ($(CC_IS_CLANG),1)
         # Check that this worked, as the linker flags would otherwise
         # reach a compiler driver that knows nothing of them.
         ifeq ($(CC_LINKS_VIA_DRIVER),1)
-            $(error The compiler still hands the link over to another compiler driver)
+            $(call TOOLCHAIN_ERROR,The compiler still hands the link over to another compiler driver)
         endif
     endif
 endif
@@ -181,63 +246,50 @@ endif
 # The same for linking, once Clang has a linker it can run.
 override CC_LINK_ERROR := $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version 2>&1 >/dev/null | grep -i 'error:' | head -n 1)
 ifneq ($(CC_LINK_ERROR),)
-    $(error The linker does not work with the given LDFLAGS: $(CC_LINK_ERROR))
+    $(call TOOLCHAIN_ERROR,The linker does not work with the given LDFLAGS: $(CC_LINK_ERROR))
 endif
 
-# Architecture specific internal flags.
-ifeq ($(ARCH),x86_64)
+ifeq ($(call CC_HAS_COMPILE_FLAG,-fno-stack-clash-protection),1)
     override CFLAGS += \
-        -m64 \
-        -march=x86-64 \
-        -mno-mmx \
-        -mno-sse \
-        -mno-red-zone \
-        -mcmodel=kernel
+        -fno-stack-clash-protection
+endif
+
+# Architecture specific checks.
+ifeq ($(ARCH),x86_64)
+    ifeq ($(call CC_HAS_COMPILE_FLAG,-fcf-protection=none),1)
+        override CFLAGS += \
+            -fcf-protection=none
+    endif
     # GCC needs this flag for interrupt handlers and Clang below 3.9 has
     # no name for it, where only a long double could reach the x87.
     ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-80387),1)
         override CFLAGS += \
             -mno-80387
     endif
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-fcf-protection=none),1)
-        override CFLAGS += \
-            -fcf-protection=none
-    endif
-    override LDFLAGS += \
-        -Wl,-m,elf_x86_64
-    override NASMFLAGS := \
-        -f elf64 \
-        $(NASMFLAGS)
 endif
 ifeq ($(ARCH),aarch64)
-    override CFLAGS += \
-        -mcpu=generic \
-        -march=armv8-a+nofp+nosimd
     ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-outline-atomics),1)
         override CFLAGS += \
             -mno-outline-atomics
     endif
-    override CFLAGS += \
-        -mcmodel=small
     ifeq ($(call CC_HAS_COMPILE_FLAG,-mbranch-protection=none),1)
         override CFLAGS += \
             -mbranch-protection=none
     endif
-    override LDFLAGS += \
-        -Wl,-m,aarch64elf
     # Only the linker can work around Cortex-A53 erratum 843419, so
     # require one that can.
     ifeq ($(call LD_HAS_FLAG,--fix-cortex-a53-843419),1)
         override LDFLAGS += \
             -Wl,--fix-cortex-a53-843419
     else
-        $(error The linker cannot work around Cortex-A53 erratum 843419)
+        $(call TOOLCHAIN_ERROR,The linker cannot work around Cortex-A53 erratum 843419)
     endif
 endif
 ifeq ($(ARCH),riscv64)
-    # The ABI comes first, as the instruction set is checked against it.
-    override CFLAGS += \
-        -mabi=lp64
+    ifeq ($(call CC_HAS_COMPILE_FLAG,-fcf-protection=none),1)
+        override CFLAGS += \
+            -fcf-protection=none
+    endif
     # Name Zicsr and Zifencei only if the compiler knows them, as older
     # ones have them in the base ISA. The whole compile is checked, as the
     # flag is not always named when an instruction set is rejected.
@@ -258,53 +310,24 @@ ifeq ($(ARCH),riscv64)
             override CFLAGS += \
                 -mcmodel=small
         else
-            $(error The compiler has no name for the low code model)
+            $(call TOOLCHAIN_ERROR,The compiler has no name for the low code model)
         endif
     endif
     ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-relax),1)
         override CFLAGS += \
             -mno-relax
     endif
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-fcf-protection=none),1)
-        override CFLAGS += \
-            -fcf-protection=none
-    endif
-    override LDFLAGS += \
-        -Wl,-m,elf64lriscv \
-        -Wl,--no-relax
 endif
 ifeq ($(ARCH),loongarch64)
-    # -msoft-float, unlike -mfpu=none, also overrides a -mdouble-float or
-    # -msingle-float in CFLAGS, which take effect wherever they appear.
-    override CFLAGS += \
-        -mabi=lp64s \
-        -march=loongarch64 \
-        -msoft-float
     # Clang 16 takes the soft float flags but still records the double
     # float ABI, which no linker mixes with soft float objects, so read
     # the ABI out of the ELF header it writes. LTO is turned off for the
     # check, as it would write bitcode with no such header instead.
     ifeq ($(CC_IS_CLANG),1)
-        override CC_FLOAT_ABI := $(shell LC_ALL=C $(CC) $(CFLAGS) -fno-lto -c -x c /dev/null -o - 2>/dev/null | od -A n -t x1 -j 48 -N 1)
+        override CC_FLOAT_ABI := $(shell $(CC) $(CFLAGS) -fno-lto -c -x c /dev/null -o - 2>/dev/null | od -A n -t x1 -j 48 -N 1)
         ifeq ($(filter %1,$(CC_FLOAT_ABI)),)
-            $(error The compiler does not record the soft float ABI)
+            $(call TOOLCHAIN_ERROR,The compiler does not record the soft float ABI)
         endif
-    endif
-    # Clang called this code model "small" before the ISA's own name.
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=normal,-mcode-model),1)
-        override CFLAGS += \
-            -mcmodel=normal
-    else
-        ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=small,-mcode-model),1)
-            override CFLAGS += \
-                -mcmodel=small
-        else
-            $(error The compiler has no name for the normal code model)
-        endif
-    endif
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-relax),1)
-        override CFLAGS += \
-            -mno-relax
     endif
     # Do not go through the GOT for external symbols. Only GCC is checked,
     # as Clang had its flag before the architecture existed.
@@ -316,6 +339,22 @@ ifeq ($(ARCH),loongarch64)
             override CFLAGS += \
                 -mdirect-extern-access
         endif
+    endif
+    # Clang called this code model "small" before the ISA's own name.
+    ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=normal,-mcode-model),1)
+        override CFLAGS += \
+            -mcmodel=normal
+    else
+        ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=small,-mcode-model),1)
+            override CFLAGS += \
+                -mcmodel=small
+        else
+            $(call TOOLCHAIN_ERROR,The compiler has no name for the normal code model)
+        endif
+    endif
+    ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-relax),1)
+        override CFLAGS += \
+            -mno-relax
     endif
     # Some Clangs do not record the LoongArch ABI in LTO objects, so pass
     # it to LTO if the IR of an empty file does not record it.
@@ -329,19 +368,7 @@ ifeq ($(ARCH),loongarch64)
             endif
         endif
     endif
-    override LDFLAGS += \
-        -Wl,-m,elf64loongarch \
-        -Wl,--no-relax
 endif
-
-# Internal linker flags that should not be changed by the user.
-override LDFLAGS += \
-    -nostdlib \
-    -static \
-    -Wl,-z,max-page-size=0x1000 \
-    -Wl,-z,noexecstack \
-    -Wl,--gc-sections \
-    -Wl,-T,linker-scripts/$(ARCH).lds
 
 # Some compilers link static PIEs even when asked for -static, so pass
 # them -no-pie when linking if they support it.
