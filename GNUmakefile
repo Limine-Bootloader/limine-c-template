@@ -142,14 +142,14 @@ kernel: kernel/.deps-obtained
 $(IMAGE_NAME).iso: limine-binary/limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root/boot
-	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
+	cp kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
-	cp -v limine.conf limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
+	cp limine.conf limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
 ifeq ($(ARCH),x86_64)
-	cp -v limine-binary/limine-bios.sys limine-binary/limine-bios-cd.bin iso_root/boot/limine/
+	cp limine-binary/limine-bios.sys limine-binary/limine-bios-cd.bin iso_root/boot/limine/
 endif
 	mkdir -p iso_root/EFI/BOOT
-	cp -v $(addprefix limine-binary/,$(LIMINE_EFI)) iso_root/EFI/BOOT/
+	cp $(addprefix limine-binary/,$(LIMINE_EFI)) iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J $(XORRISO_BIOS_FLAGS) \
 		-hfsplus -apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
@@ -162,7 +162,7 @@ endif
 
 $(IMAGE_NAME).hdd: limine-binary/limine kernel
 	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1024k count=0 seek=$(HDD_SIZE) of=$(IMAGE_NAME).hdd
+	dd if=/dev/null bs=1024k seek=$(HDD_SIZE) of=$(IMAGE_NAME).hdd
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:$(HDD_PART_START):$(HDD_PART_END) -t 1:ef00 $(SGDISK_MBR_FLAGS)
 ifeq ($(ARCH),x86_64)
 	./limine-binary/limine bios-install $(IMAGE_NAME).hdd

@@ -2,6 +2,16 @@
 
 set -e
 
+# Keep cd from picking a same-named directory out of CDPATH.
+# Assigned first, as some shells fail to unset an unset variable.
+CDPATH=
+unset CDPATH
+
+# Keep git from being pointed at another repository, as happens in hooks.
+# They are assigned first for the same reason as CDPATH.
+GIT_DIR= GIT_WORK_TREE= GIT_COMMON_DIR= GIT_INDEX_FILE= GIT_OBJECT_DIRECTORY=
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+
 srcdir="$(dirname "$0")"
 test -z "$srcdir" && srcdir=.
 
@@ -9,9 +19,9 @@ cd "$srcdir"
 
 clone_repo_commit() {
     if test -d "$2/.git"; then
-        git -C "$2" reset --hard
-        git -C "$2" clean -fd
-        if ! git -C "$2" -c advice.detachedHead=false checkout $3; then
+        ( cd "$2" && git reset --hard )
+        ( cd "$2" && git clean -f -d )
+        if ! ( cd "$2" && git checkout -q $3 ); then
             rm -rf "$2"
         fi
     else
@@ -22,7 +32,7 @@ clone_repo_commit() {
     fi
     if ! test -d "$2"; then
         git clone $1 "$2"
-        if ! git -C "$2" -c advice.detachedHead=false checkout $3; then
+        if ! ( cd "$2" && git checkout -q $3 ); then
             rm -rf "$2"
             exit 1
         fi
