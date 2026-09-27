@@ -443,11 +443,13 @@ clean:
 distclean:
 	rm -rf bin-* obj-* .deps-obtained .cache compile_commands.json freestanding-c-hdrs cc-runtime limine-protocol
 
-# Install the final built executable to its final on-root location.
+# Install the final built executable to its final on-root location. Not
+# install(1), which takes other arguments on illumos and Solaris.
 .PHONY: install
 install: all
-	install -d "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)"
-	install -m 644 bin-$(ARCH)/$(OUTPUT) "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(ARCH)"
+	mkdir -p "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)"
+	cp bin-$(ARCH)/$(OUTPUT) "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(ARCH)"
+	chmod 644 "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(ARCH)"
 
 # Try to undo whatever the "install" target did.
 .PHONY: uninstall
