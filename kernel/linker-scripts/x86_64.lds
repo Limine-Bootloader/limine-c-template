@@ -66,9 +66,11 @@ SECTIONS
         *(COMMON)
     } :data
 
-    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
+    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts, */
+    /* and the GOT, which nothing in the kernel needs but some linkers create. */
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
+        *(.got .got.*)
     }
 }

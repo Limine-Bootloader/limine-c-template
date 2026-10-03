@@ -66,11 +66,13 @@ SECTIONS
         *(COMMON)
     } :data
 
-    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
-    /* Also discard .ARM.attributes, which newer GCCs emit. */
+    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts, */
+    /* the GOT, which nothing in the kernel needs but some linkers create, and */
+    /* .ARM.attributes, which newer GCCs emit. */
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
+        *(.got .got.*)
         *(.ARM.attributes)
     }
 }
