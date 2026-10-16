@@ -139,7 +139,7 @@ override CHANGED_VARSFILES := $(foreach f,$(VARSFILES),$(shell printf '%s\n' '$(
 FORCE:
 $(CHANGED_VARSFILES): FORCE
 $(VARSFILES): limine-binary/limine.c
-	printf '%s\n' '$(subst ','\'',$($(notdir $@)))' > $@
+	@printf '%s\n' '$(subst ','\'',$($(notdir $@)))' > $@
 
 # Remove the utility first, as its makefile does not track the toolchain.
 limine-binary/limine: limine-binary/limine.c $(VARSFILES)
