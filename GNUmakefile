@@ -122,9 +122,28 @@ edk2-ovmf-bins: edk2-ovmf-bins.tar.gz
 limine-binary.tar.gz:
 	curl -fL -o $@ https://github.com/Limine-Bootloader/Limine/releases/latest/download/limine-binary.tar.gz
 
-limine-binary/limine: limine-binary.tar.gz
+# Date the source by the tarball, not the release inside it, so that what
+# is made from it is remade whenever it is extracted. Not by the clock, as
+# some touch use a finer one than file writes, dating it after what follows.
+limine-binary/limine.c: limine-binary.tar.gz
 	rm -rf limine-binary
 	gunzip < limine-binary.tar.gz | tar -xf -
+	touch -r limine-binary.tar.gz $@
+
+# The utility depends on records of the variables it is built with, named
+# after them, which are compared here and remade when they differ. They are
+# made after extracting, which removes them.
+override VARSFILES := $(addprefix limine-binary/,HOST_CC HOST_CFLAGS HOST_CPPFLAGS HOST_LDFLAGS HOST_LIBS)
+override CHANGED_VARSFILES := $(foreach f,$(VARSFILES),$(shell printf '%s\n' '$(subst ','\'',$($(notdir $(f))))' | cmp -s - $(f) 2>/dev/null || echo $(f)))
+.PHONY: FORCE
+FORCE:
+$(CHANGED_VARSFILES): FORCE
+$(VARSFILES): limine-binary/limine.c
+	printf '%s\n' '$(subst ','\'',$($(notdir $@)))' > $@
+
+# Remove the utility first, as its makefile does not track the toolchain.
+limine-binary/limine: limine-binary/limine.c $(VARSFILES)
+	rm -f $@
 	$(MAKE) -C limine-binary \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
