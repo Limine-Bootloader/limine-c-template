@@ -212,6 +212,15 @@ ifneq ($(CC_IS_CLANG),1)
     endif
 endif
 
+# Some drivers ignore -fuse-ld on some targets, so look for the name of the
+# linker asked for in the banner of the one that runs, on each use.
+override CC_FUSE_LD := $(lastword $(filter -fuse-ld=%,$(CFLAGS) $(LDFLAGS)))
+override CC_FUSE_LD_NAME := $(firstword $(subst -, ,$(patsubst ld.%,%,$(notdir $(patsubst -fuse-ld=%,%,$(CC_FUSE_LD))))))
+# GNU ld calls itself ld, not bfd.
+override CC_LD_BANNER_NAME := $(patsubst bfd,ld,$(CC_FUSE_LD_NAME))
+override CC_LD_VERSION = $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version 2>/dev/null | head -n 1)
+override CC_RUNS_FUSE_LD = $(shell ! printf '%s\n' '$(subst ',,$(CC_LD_VERSION))' | grep -qiE '(^|[^[:alnum:]])$(CC_LD_BANNER_NAME)([^[:alnum:]]|$$)'; echo $$?)
+
 ifeq ($(CC_IS_CLANG),1)
     # Clang hands freestanding links over to another compiler driver on
     # some targets. Look for the linker flags being passed on as they
@@ -223,10 +232,11 @@ ifeq ($(CC_IS_CLANG),1)
     override CLANG_PRINT_COMMANDS := -\#\#\#
     override CC_LINKS_VIA_DRIVER = $(shell ! $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version $(CLANG_PRINT_COMMANDS) 2>&1 | grep '^ "' | tail -n 1 | grep -q -- '-Wl,'; echo $$?)
 
-    # If it does, link as for the Linux target, where Clang runs the
-    # linker itself, and keep that target's configuration files out. The
-    # flag is looked for by compiling, as linking is not checked yet.
-    ifeq ($(CC_LINKS_VIA_DRIVER),1)
+    # If it does, or runs another linker, as Clang 10 and older do for
+    # RISC-V, link as for the Linux target, where Clang itself runs the
+    # linker asked for, and keep that target's configuration files out.
+    # The flag is looked for by compiling, as linking is not checked yet.
+    ifneq ($(CC_LINKS_VIA_DRIVER)$(CC_RUNS_FUSE_LD),01)
         override LDFLAGS += \
             -target $(ARCH)-linux-gnu
         ifeq ($(call CC_HAS_COMPILE_FLAG,--no-default-config),1)
@@ -235,9 +245,15 @@ ifeq ($(CC_IS_CLANG),1)
         endif
 
         # Check that this worked, as the linker flags would otherwise
-        # reach a compiler driver that knows nothing of them.
+        # reach a compiler driver that knows nothing of them, or another
+        # linker. If no linker runs at all, the check below says why.
         ifeq ($(CC_LINKS_VIA_DRIVER),1)
             $(call TOOLCHAIN_ERROR,The compiler still hands the link over to another compiler driver)
+        endif
+        ifneq ($(CC_LD_VERSION),)
+            ifneq ($(CC_RUNS_FUSE_LD),1)
+                $(call TOOLCHAIN_ERROR,The compiler still ignores $(CC_FUSE_LD) and runs another linker: $(CC_LD_VERSION))
+            endif
         endif
     endif
 endif
@@ -248,15 +264,8 @@ ifneq ($(CC_LINK_ERROR),)
     $(call TOOLCHAIN_ERROR,The linker does not work with the given LDFLAGS: $(CC_LINK_ERROR))
 endif
 
-# Some drivers ignore -fuse-ld on some targets, so check that the banner
-# of the linker that runs names the one asked for, in any case.
-override CC_FUSE_LD := $(lastword $(filter -fuse-ld=%,$(CFLAGS) $(LDFLAGS)))
+# Check that the linker asked for is the one that runs, in any case.
 ifneq ($(CC_FUSE_LD),)
-    override CC_FUSE_LD_NAME := $(firstword $(subst -, ,$(patsubst ld.%,%,$(notdir $(patsubst -fuse-ld=%,%,$(CC_FUSE_LD))))))
-    # GNU ld calls itself ld, not bfd.
-    override CC_LD_BANNER_NAME := $(patsubst bfd,ld,$(CC_FUSE_LD_NAME))
-    override CC_LD_VERSION := $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version 2>/dev/null | head -n 1)
-    override CC_RUNS_FUSE_LD := $(shell ! printf '%s\n' '$(subst ',,$(CC_LD_VERSION))' | grep -qiE '(^|[^[:alnum:]])$(CC_LD_BANNER_NAME)([^[:alnum:]]|$$)'; echo $$?)
     ifneq ($(CC_RUNS_FUSE_LD),1)
         $(call TOOLCHAIN_ERROR,The compiler ignores $(CC_FUSE_LD) and runs another linker: $(CC_LD_VERSION))
     endif
