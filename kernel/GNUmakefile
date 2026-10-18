@@ -290,10 +290,6 @@ ifeq ($(ARCH),x86_64)
     endif
 endif
 ifeq ($(ARCH),aarch64)
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-outline-atomics),1)
-        override CFLAGS += \
-            -mno-outline-atomics
-    endif
     ifeq ($(call CC_HAS_COMPILE_FLAG,-mbranch-protection=none),1)
         override CFLAGS += \
             -mbranch-protection=none
@@ -404,7 +400,7 @@ endif
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree
 # (except the src/arch/* directories, as those are gonna be added
 # in the next step).
-override SRCFILES := $(shell find -L src cc-runtime/src -type f ! -path 'src/arch/*' 2>/dev/null | LC_ALL=C sort)
+override SRCFILES := $(shell find -L src freestanding-lgrt/src -type f ! -path 'src/arch/*' 2>/dev/null | LC_ALL=C sort)
 # Add architecture specific files, if they exist.
 override SRCFILES += $(shell find -L src/arch/$(ARCH) -type f 2>/dev/null | LC_ALL=C sort)
 # Obtain the object and header dependencies file names.
@@ -452,7 +448,7 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile obj-$(ARCH)/CC obj-$(ARCH)/CFLAGS obj-$(ARCH)
 
 # The compiler may emit calls to the memory functions and the compiler
 # runtime that LTO does not account for, so never build those with LTO.
-obj-$(ARCH)/src/memory.c.o obj-$(ARCH)/cc-runtime/src/cc-runtime.c.o: override CFLAGS += -fno-lto
+obj-$(ARCH)/src/memory.c.o obj-$(ARCH)/freestanding-lgrt/src/freestanding-lgrt.c.o: override CFLAGS += -fno-lto
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/%.c.o: %.c GNUmakefile obj-$(ARCH)/CC obj-$(ARCH)/CFLAGS obj-$(ARCH)/CPPFLAGS
@@ -479,7 +475,7 @@ clean:
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean
 distclean:
-	rm -rf bin-* obj-* .deps-obtained .cache compile_commands.json freestanding-c-hdrs cc-runtime limine-protocol
+	rm -rf bin-* obj-* .deps-obtained .cache compile_commands.json freestanding-c-hdrs freestanding-lgrt limine-protocol
 
 # Install the final built executable to its final on-root location. Not
 # install(1), which takes other arguments on illumos and Solaris.
