@@ -118,7 +118,7 @@ override CPPFLAGS := \
     -I limine-protocol/include \
     -isystem freestanding-c-hdrs/include \
     $(CPPFLAGS) \
-    -MMD \
+    -MD \
     -MP
 
 ifeq ($(ARCH),x86_64)
