@@ -44,12 +44,12 @@ rm -f .deps-obtained
 clone_repo_commit \
     https://github.com/osdev0/freestanding-c-hdrs.git \
     freestanding-c-hdrs \
-    5b4a649b38e1d27f2b7470f593d58e907438aca5
+    29e66e09aba15375d03937c43b7ba4359f19304d
 
 clone_repo_commit \
     https://github.com/osdev0/freestanding-lgrt.git \
     freestanding-lgrt \
-    a6e79759589f9905ec08c5fdc7f10f34f668d145
+    b2a44eb59d9f7e501659a96e1e9b03a4665a939e
 
 clone_repo_commit \
     https://github.com/Limine-Bootloader/limine-protocol.git \
