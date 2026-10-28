@@ -10,40 +10,63 @@ ARCH := x86_64
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m 2G
 
-# Internal architecture specific variables that should not be changed by the
-# user. x86_64 images get an MBR, the most portable form for BIOS and UEFI.
-override XORRISO_BIOS_FLAGS :=
-override SGDISK_MBR_FLAGS :=
+# Per-architecture user controllable QEMU flags.
 ifeq ($(ARCH),x86_64)
-    override QEMU_MACHINE_FLAGS := \
-        -M q35
+    QEMU_MACHINE := -M q35
+    # Uncomment this line and comment out/remove the xHCI/USB keyboard/mouse
+    # block below if the kernel does not support xHCI/USB and wants legacy
+    # PS/2 keyboard and mouse instead.
+    #QEMU_DEVICES :=
+    QEMU_DEVICES := \
+        -device qemu-xhci \
+        -device usb-kbd \
+        -device usb-mouse
+    QEMU_CPU :=
+else
+    QEMU_MACHINE := -M virt
+    ifeq ($(ARCH),aarch64)
+        QEMU_CPU := -cpu cortex-a72
+    endif
+    ifeq ($(ARCH),riscv64)
+        QEMU_CPU := -cpu rv64
+    endif
+    ifeq ($(ARCH),loongarch64)
+        QEMU_CPU := -cpu la464
+    endif
+    QEMU_DEVICES := \
+        -device ramfb \
+        -device qemu-xhci \
+        -device usb-kbd \
+        -device usb-mouse
+endif
+
+override QEMUFLAGS := \
+    $(QEMU_MACHINE) \
+    $(QEMU_CPU) \
+    $(QEMU_DEVICES) \
+    $(QEMUFLAGS)
+override QEMU_UEFI_FW := \
+    -drive if=pflash,unit=0,format=raw,file=edk2-ovmf-bins/ovmf-code-$(ARCH).fd,readonly=on
+
+# Internal per-architecture flags for xorriso and sgdisk calls and for which EFI binaries to use.
+ifeq ($(ARCH),x86_64)
     override LIMINE_EFI := BOOTX64.EFI BOOTIA32.EFI
     override XORRISO_BIOS_FLAGS := \
         -b boot/limine/limine-bios-cd.bin -no-emul-boot -boot-load-size 4 -boot-info-table
     override SGDISK_MBR_FLAGS := -m 1
 else
     ifeq ($(ARCH),aarch64)
-        override QEMU_CPU := cortex-a72
         override LIMINE_EFI := BOOTAA64.EFI
     endif
     ifeq ($(ARCH),riscv64)
-        override QEMU_CPU := rv64
         override LIMINE_EFI := BOOTRISCV64.EFI
     endif
     ifeq ($(ARCH),loongarch64)
-        override QEMU_CPU := la464
         override LIMINE_EFI := BOOTLOONGARCH64.EFI
     endif
-    override QEMU_MACHINE_FLAGS := \
-        -M virt \
-        -cpu $(QEMU_CPU) \
-        -device ramfb \
-        -device qemu-xhci \
-        -device usb-kbd \
-        -device usb-tablet
+    override XORRISO_BIOS_FLAGS :=
+    override SGDISK_MBR_FLAGS :=
 endif
-override QEMU_UEFI_FLAGS := \
-    -drive if=pflash,unit=0,format=raw,file=edk2-ovmf-bins/ovmf-code-$(ARCH).fd,readonly=on
 
 override IMAGE_NAME := template-$(ARCH)
 
@@ -80,24 +103,21 @@ all-hdd: $(IMAGE_NAME).hdd
 .PHONY: run
 run: edk2-ovmf-bins $(IMAGE_NAME).iso
 	qemu-system-$(ARCH) \
-		$(QEMU_MACHINE_FLAGS) \
-		$(QEMU_UEFI_FLAGS) \
 		-cdrom $(IMAGE_NAME).iso \
-		$(QEMUFLAGS)
+		$(QEMUFLAGS) \
+		$(QEMU_UEFI_FW)
 
 .PHONY: run-hdd
 run-hdd: edk2-ovmf-bins $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
-		$(QEMU_MACHINE_FLAGS) \
-		$(QEMU_UEFI_FLAGS) \
 		-hda $(IMAGE_NAME).hdd \
-		$(QEMUFLAGS)
+		$(QEMUFLAGS) \
+		$(QEMU_UEFI_FW)
 
 ifeq ($(ARCH),x86_64)
 .PHONY: run-bios
 run-bios: $(IMAGE_NAME).iso
 	qemu-system-$(ARCH) \
-		$(QEMU_MACHINE_FLAGS) \
 		-cdrom $(IMAGE_NAME).iso \
 		-boot d \
 		$(QEMUFLAGS)
@@ -105,7 +125,6 @@ run-bios: $(IMAGE_NAME).iso
 .PHONY: run-hdd-bios
 run-hdd-bios: $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
-		$(QEMU_MACHINE_FLAGS) \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 endif
