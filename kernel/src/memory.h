@@ -1,7 +1,6 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
-#include <stdint.h>
 #include <stddef.h>
 
 void *memcpy(void *restrict dest, const void *restrict src, size_t n);

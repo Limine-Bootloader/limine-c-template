@@ -1,14 +1,14 @@
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <memory.h>
 
-// GCC and Clang reserve the right to generate calls to the following
-// 4 functions even if they are not directly called.
-// They must be implemented as the C specification mandates.
-// DO NOT remove or rename these functions, or stuff will eventually break!
+// GCC and Clang reserve the right to generate calls to the following 4
+// functions even if they are not directly called. They must be implemented as
+// the C specification mandates. DO NOT remove or rename these functions, or
+// stuff will eventually break.
 
 #ifdef memcpy
-#  undef memcpy
+#   undef memcpy
 #endif
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     uint8_t *pdest = dest;
@@ -22,7 +22,7 @@ void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
 }
 
 #ifdef memset
-#  undef memset
+#   undef memset
 #endif
 void *memset(void *s, int c, size_t n) {
     uint8_t *p = s;
@@ -35,7 +35,7 @@ void *memset(void *s, int c, size_t n) {
 }
 
 #ifdef memmove
-#  undef memmove
+#   undef memmove
 #endif
 void *memmove(void *dest, const void *src, size_t n) {
     uint8_t *pdest = dest;
@@ -46,8 +46,8 @@ void *memmove(void *dest, const void *src, size_t n) {
             pdest[i] = psrc[i];
         }
     } else if ((uintptr_t)src < (uintptr_t)dest) {
-        for (size_t i = n; i > 0; i--) {
-            pdest[i-1] = psrc[i-1];
+        for (size_t i = n; i-- > 0; ) {
+            pdest[i] = psrc[i];
         }
     }
 
@@ -55,7 +55,7 @@ void *memmove(void *dest, const void *src, size_t n) {
 }
 
 #ifdef memcmp
-#  undef memcmp
+#   undef memcmp
 #endif
 int memcmp(const void *s1, const void *s2, size_t n) {
     const uint8_t *p1 = s1;
