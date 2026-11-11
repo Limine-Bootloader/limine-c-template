@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdnoreturn.h>
 #include <limine.h>
 
 // Set the base revision to 6, this is recommended as this is the latest base
@@ -31,7 +32,7 @@ __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
 // Halt and catch fire function.
-static void hcf(void) {
+static noreturn void hcf(void) {
     for (;;) {
 #if defined(__x86_64__)
         asm ("hlt");
