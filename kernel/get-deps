@@ -49,7 +49,7 @@ clone_repo_commit \
 clone_repo_commit \
     https://github.com/osdev0/freestanding-lgrt.git \
     freestanding-lgrt \
-    1bf4c8eaa692e3ad0b1c927fd4712caa60bbe332
+    fbc37e3babf39f464e6f49401e25bab71cc7f938
 
 clone_repo_commit \
     https://github.com/Limine-Bootloader/limine-protocol.git \
