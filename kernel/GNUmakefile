@@ -103,8 +103,12 @@ override CFLAGS += \
     -Wextra \
     -std=gnu11 \
     -ffreestanding \
+    -fno-builtin \
     -fno-exceptions \
+    -fno-asynchronous-unwind-tables \
+    -fno-unwind-tables \
     -fno-common \
+    -fno-strict-aliasing \
     -fno-stack-protector \
     -fno-stack-check \
     -fno-PIC \
@@ -173,6 +177,7 @@ ifeq ($(ARCH),aarch64)
     override CFLAGS += \
         -mcpu=generic \
         -march=armv8-a+nofp+nosimd \
+        -mlittle-endian \
         -mcmodel=small
     override LDFLAGS += \
         -Wl,-m,aarch64elf
@@ -294,6 +299,13 @@ ifeq ($(ARCH),aarch64)
         override CFLAGS += \
             -mbranch-protection=none
     endif
+    # Clang does not take this ABI name.
+    ifneq ($(CC_IS_CLANG),1)
+        ifeq ($(call CC_HAS_COMPILE_FLAG,-mabi=lp64),1)
+            override CFLAGS += \
+                -mabi=lp64
+        endif
+    endif
     # Only the linker can work around Cortex-A53 erratum 843419, so
     # require one that can.
     ifeq ($(call LD_HAS_FLAG,--fix-cortex-a53-843419),1)
@@ -328,6 +340,12 @@ ifeq ($(ARCH),riscv64)
             override CFLAGS += \
                 -mcmodel=small
         endif
+    endif
+    # Many cores trap unaligned accesses for the firmware to emulate.
+    # Compilers without the flag never make them.
+    ifeq ($(call CC_HAS_COMPILE_FLAG,-mstrict-align),1)
+        override CFLAGS += \
+            -mstrict-align
     endif
     # Keep linker relaxation away from gp, which nothing sets up. Linkers
     # without the flag only use gp if the script defines __global_pointer$.
