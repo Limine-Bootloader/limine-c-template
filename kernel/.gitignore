@@ -3,6 +3,7 @@
 /.deps-obtained
 /freestanding-c-hdrs
 /freestanding-lgrt
+/gmake-toolchain-helper
 /limine-protocol
 /bin-*
 /obj-*

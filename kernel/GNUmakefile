@@ -57,48 +57,22 @@ endif
 # User controllable linker flags. We set none by default.
 LDFLAGS :=
 
-# Ensure the dependencies have been obtained.
-ifneq ($(filter-out clean distclean,$(or $(MAKECMDGOALS),default)),)
+# The goals other than cleaning and uninstalling, which need neither the
+# dependencies nor a toolchain.
+override BUILD_GOALS := $(filter-out clean distclean uninstall,$(or $(MAKECMDGOALS),all))
+
+# Ensure the dependencies have been obtained, and set up the toolchain
+# helper, which records the flags as given, before the internal ones.
+ifneq ($(BUILD_GOALS),)
     ifeq ($(wildcard .deps-obtained),)
         $(error Please run the ./get-deps script first)
     endif
+    override TCH_ARCH := $(ARCH)
+    override TCH_CLANG_TARGET := $(ARCH)-unknown-none-elf
+    override TCH_SELECTORS := TOOLCHAIN TOOLCHAIN_PREFIX
+    override TCH_CROSS_HINT := use TOOLCHAIN=llvm or a cross compiler for $(ARCH) with TOOLCHAIN_PREFIX
+    include gmake-toolchain-helper/init.mk
 endif
-
-# Stop on a problem the checks below find, unless only cleaning, which needs
-# no toolchain.
-ifneq ($(filter-out clean distclean,$(or $(MAKECMDGOALS),default)),)
-    override TOOLCHAIN_ERROR = $(error $(1))
-else
-    override TOOLCHAIN_ERROR =
-endif
-
-# Check if CC is Clang.
-override CC_IS_CLANG := $(shell ! $(CC) --version 2>/dev/null | grep -q '^Target: '; echo $$?)
-
-# Check if CFLAGS enables LTO, decided by the last -flto or -fno-lto.
-override CFLAGS_HAS_LTO := $(shell ! printf '%s\n' $(CFLAGS) | grep -E '^-f(no-)?lto(=|$$)' | tail -n 1 | grep -q '^-flto'; echo $$?)
-
-# Macros to check if a flag is supported, used as $(call MACRO,flag), and
-# expanding to 1 or 0. A second argument names another spelling.
-
-# The name of a flag, up to any "=", with the dashes after the first made
-# optional, as compilers leave the value out or spell the flag differently.
-override FLAG_NAME = -$(subst -,-?,$(patsubst -%,%,$(firstword $(subst =, ,$(1)))))
-
-# Look for a diagnostic naming the flag, in the untranslated C locale. The
-# name has to stand on its own, as "-pie" would otherwise be found inside
-# a complaint about "-no-pie".
-override FLAG_IS_NAMED = grep -qE '(error|warning|note):.*[^[:alnum:]]($(call FLAG_NAME,$(1))$(if $(2),|$(call FLAG_NAME,$(2))))([^-[:alnum:]]|$$)'
-
-# Check if the compiler supports a flag when compiling.
-override CC_HAS_COMPILE_FLAG = $(shell LC_ALL=C $(CC) $(CFLAGS) $(1) -c -x c /dev/null -o /dev/null 2>&1 >/dev/null | $(call FLAG_IS_NAMED,$(1),$(2)); echo $$?)
-
-# Check if the compiler supports a flag when linking, linking nothing.
-override CC_HAS_LINK_FLAG = $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) $(1) -Wl,--version 2>&1 >/dev/null | $(call FLAG_IS_NAMED,$(1),$(2)); echo $$?)
-
-# Check if the linker supports a flag by searching its help, as older GNU
-# ld take unknown flags for different ones (-no-pie for -n -o -pie).
-override LD_HAS_FLAG = $(shell ! LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--help 2>/dev/null | grep -qE '(^|[[:space:]])-?$(1)([[:space:],=[]|$$)'; echo $$?)
 
 # Internal C flags that should not be changed by the user.
 override CFLAGS += \
@@ -142,16 +116,6 @@ override LDFLAGS := \
     -Wl,--build-id=sha1 \
     $(LDFLAGS)
 
-# Make Clang target the freestanding ELF triple of the architecture.
-ifeq ($(CC_IS_CLANG),1)
-    override CC += \
-        -target $(ARCH)-unknown-none-elf
-    # Use LLD unless LDFLAGS picks another linker.
-    override LDFLAGS := \
-        -fuse-ld=lld \
-        $(LDFLAGS)
-endif
-
 # Internal linker flags that should not be changed by the user.
 override LDFLAGS += \
     -nostdlib \
@@ -161,7 +125,8 @@ override LDFLAGS += \
     -Wl,--gc-sections \
     -Wl,-T,linker-scripts/$(ARCH).lds
 
-# Architecture specific internal flags.
+# Architecture specific internal flags, and the macro that compilers define
+# for the architecture, which the toolchain helper checks for.
 ifeq ($(ARCH),x86_64)
     override CFLAGS += \
         -m64 \
@@ -175,6 +140,7 @@ ifeq ($(ARCH),x86_64)
     override NASMFLAGS := \
         -f elf64 \
         $(NASMFLAGS)
+    override TCH_TARGET_MACRO := __x86_64__
 endif
 ifeq ($(ARCH),aarch64)
     override CFLAGS += \
@@ -184,6 +150,7 @@ ifeq ($(ARCH),aarch64)
         -mcmodel=small
     override LDFLAGS += \
         -Wl,-m,aarch64elf
+    override TCH_TARGET_MACRO := __aarch64__
 endif
 ifeq ($(ARCH),riscv64)
     # The ABI comes first, as the instruction set is checked against it.
@@ -191,6 +158,7 @@ ifeq ($(ARCH),riscv64)
         -mabi=lp64
     override LDFLAGS += \
         -Wl,-m,elf64lriscv
+    override TCH_TARGET_MACRO := __riscv_xlen=64
 endif
 ifeq ($(ARCH),loongarch64)
     # -msoft-float, unlike -mfpu=none, also overrides a -mdouble-float or
@@ -201,202 +169,91 @@ ifeq ($(ARCH),loongarch64)
         -msoft-float
     override LDFLAGS += \
         -Wl,-m,elf64loongarch
+    override TCH_TARGET_MACRO := __loongarch_grlen=64
 endif
 
-# Check that the compiler works with the given flags, as the checks below
-# would otherwise blame a missing feature.
-override CC_COMPILE_ERROR := $(shell LC_ALL=C $(CC) $(CFLAGS) -c -x c /dev/null -o /dev/null 2>&1 >/dev/null | grep -i 'error:' | head -n 1)
-ifneq ($(CC_COMPILE_ERROR),)
-    $(call TOOLCHAIN_ERROR,The compiler does not work with the given CFLAGS: $(CC_COMPILE_ERROR))
+# Check the toolchain with the internal flags, which also makes Clang target
+# the architecture and link with LLD unless LDFLAGS picks another linker.
+ifneq ($(BUILD_GOALS),)
+    include gmake-toolchain-helper/check.mk
 endif
 
-# Check that the compiler emits ELF objects. Go by the macro for ELF targets,
-# as GNU as cannot write an object to standard output. Clang is given an ELF
-# target, and before version 17 did not define the macro for all of them.
-ifneq ($(CC_IS_CLANG),1)
-    override CC_EMITS_ELF := $(shell ! $(CC) $(CFLAGS) -dM -E -x c /dev/null 2>/dev/null | grep -q 'define __ELF__ 1'; echo $$?)
-    ifneq ($(CC_EMITS_ELF),1)
-        $(call TOOLCHAIN_ERROR,The compiler does not emit ELF objects)
-    endif
-endif
+# Flags that depend on the toolchain. When nothing is to be built, the
+# helper is not included: its macros expand to nothing, and TCH_CC_IS_CLANG
+# and TCH_CC_LTO are empty.
+override CFLAGS += \
+    $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-fno-stack-clash-protection)
 
-# Some drivers ignore -fuse-ld on some targets, so look for the name of the
-# linker asked for in the banner of the one that runs, on each use.
-override CC_FUSE_LD := $(lastword $(filter -fuse-ld=%,$(CFLAGS) $(LDFLAGS)))
-override CC_FUSE_LD_NAME := $(firstword $(subst -, ,$(patsubst ld.%,%,$(notdir $(patsubst -fuse-ld=%,%,$(CC_FUSE_LD))))))
-# GNU ld calls itself ld, not bfd.
-override CC_LD_BANNER_NAME := $(patsubst bfd,ld,$(CC_FUSE_LD_NAME))
-override CC_LD_VERSION = $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version 2>/dev/null | head -n 1)
-override CC_RUNS_FUSE_LD = $(shell ! printf '%s\n' '$(subst ',,$(CC_LD_VERSION))' | grep -qiE '(^|[^[:alnum:]])$(CC_LD_BANNER_NAME)([^[:alnum:]]|$$)'; echo $$?)
-
-ifeq ($(CC_IS_CLANG),1)
-    # Clang hands freestanding links over to another compiler driver on
-    # some targets. Look for the linker flags being passed on as they
-    # are, which a linker Clang runs itself would be given translated,
-    # as the driver it picks need not be named "gcc" at all. The check
-    # is made again below, so it runs on each use. The print flag is
-    # kept in a variable, as older makes take a "#" in a call for a
-    # comment.
-    override CLANG_PRINT_COMMANDS := -\#\#\#
-    override CC_LINKS_VIA_DRIVER = $(shell ! $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version $(CLANG_PRINT_COMMANDS) 2>&1 | grep '^ "' | tail -n 1 | grep -q -- '-Wl,'; echo $$?)
-
-    # If it does, or runs another linker, as Clang 10 and older do for
-    # RISC-V, link as for the Linux target, where Clang itself runs the
-    # linker asked for, and keep that target's configuration files out.
-    # The flag is looked for by compiling, as linking is not checked yet.
-    ifneq ($(CC_LINKS_VIA_DRIVER)$(CC_RUNS_FUSE_LD),01)
-        override LDFLAGS += \
-            -target $(ARCH)-linux-gnu
-        ifeq ($(call CC_HAS_COMPILE_FLAG,--no-default-config),1)
-            override LDFLAGS += \
-                --no-default-config
-        endif
-
-        # Check that this worked, as the linker flags would otherwise
-        # reach a compiler driver that knows nothing of them, or another
-        # linker. If no linker runs at all, the check below says why.
-        ifeq ($(CC_LINKS_VIA_DRIVER),1)
-            $(call TOOLCHAIN_ERROR,The compiler still hands the link over to another compiler driver)
-        endif
-        ifneq ($(CC_LD_VERSION),)
-            ifneq ($(CC_RUNS_FUSE_LD),1)
-                $(call TOOLCHAIN_ERROR,The compiler still ignores $(CC_FUSE_LD) and runs another linker: $(CC_LD_VERSION))
-            endif
-        endif
-    endif
-endif
-
-# The same for linking, once Clang has a linker it can run.
-override CC_LINK_ERROR := $(shell LC_ALL=C $(CC) $(CFLAGS) $(LDFLAGS) -Wl,--version 2>&1 >/dev/null | grep -i 'error:' | head -n 1)
-ifneq ($(CC_LINK_ERROR),)
-    $(call TOOLCHAIN_ERROR,The linker does not work with the given LDFLAGS: $(CC_LINK_ERROR))
-endif
-
-# Check that the linker asked for is the one that runs, in any case.
-ifneq ($(CC_FUSE_LD),)
-    ifneq ($(CC_RUNS_FUSE_LD),1)
-        $(call TOOLCHAIN_ERROR,The compiler ignores $(CC_FUSE_LD) and runs another linker: $(CC_LD_VERSION))
-    endif
-endif
-
-ifeq ($(call CC_HAS_COMPILE_FLAG,-fno-stack-clash-protection),1)
-    override CFLAGS += \
-        -fno-stack-clash-protection
-endif
-
-# Architecture specific checks.
+# Architecture specific flags that depend on the toolchain.
 ifeq ($(ARCH),x86_64)
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-fcf-protection=none),1)
-        override CFLAGS += \
-            -fcf-protection=none
-    endif
+    override CFLAGS += \
+        $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-fcf-protection=none)
     # GCC needs this flag for interrupt handlers and Clang below 3.9 has
     # no name for it, where only a long double could reach the x87.
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mno-80387),1)
-        override CFLAGS += \
-            -mno-80387
-    endif
+    override CFLAGS += \
+        $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mno-80387)
 endif
 ifeq ($(ARCH),aarch64)
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mbranch-protection=none),1)
-        override CFLAGS += \
-            -mbranch-protection=none
-    endif
+    override CFLAGS += \
+        $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mbranch-protection=none)
     # Clang does not take this ABI name.
-    ifneq ($(CC_IS_CLANG),1)
-        ifeq ($(call CC_HAS_COMPILE_FLAG,-mabi=lp64),1)
-            override CFLAGS += \
-                -mabi=lp64
-        endif
+    ifneq ($(TCH_CC_IS_CLANG),1)
+        override CFLAGS += \
+            $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mabi=lp64)
     endif
     # Only the linker can work around Cortex-A53 erratum 843419, so
     # require one that can.
-    ifeq ($(call LD_HAS_FLAG,--fix-cortex-a53-843419),1)
-        override LDFLAGS += \
-            -Wl,--fix-cortex-a53-843419
-    else
-        $(call TOOLCHAIN_ERROR,The linker cannot work around Cortex-A53 erratum 843419)
-    endif
+    override LDFLAGS += \
+        $(call TCH_REQUIRE,$(call TCH_LINKER_HAS_FLAG,--fix-cortex-a53-843419),The linker cannot work around Cortex-A53 erratum 843419)
 endif
 ifeq ($(ARCH),riscv64)
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-fcf-protection=none),1)
-        override CFLAGS += \
-            -fcf-protection=none
-    endif
+    override CFLAGS += \
+        $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-fcf-protection=none)
     # Name Zicsr and Zifencei only if the compiler knows them, as older
     # ones have them in the base ISA. The whole compile is checked, as the
     # flag is not always named when an instruction set is rejected.
-    override CC_HAS_ZICSR_ZIFENCEI := $(shell ! $(CC) $(CFLAGS) -march=rv64imac_zicsr_zifencei -c -x c /dev/null -o /dev/null 2>/dev/null; echo $$?)
-    ifeq ($(CC_HAS_ZICSR_ZIFENCEI),1)
-        override CFLAGS += \
-            -march=rv64imac_zicsr_zifencei
-    else
-        override CFLAGS += \
-            -march=rv64imac
-    endif
+    override CFLAGS += \
+        $(or $(call TCH_DRIVER_COMPILES_WITH,CC,-march=rv64imac_zicsr_zifencei),-march=rv64imac)
     # Clang called this code model "small" before the ISA's own name.
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=medlow,-mcode-model),1)
-        override CFLAGS += \
-            -mcmodel=medlow
-    else
-        ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=small,-mcode-model),1)
-            override CFLAGS += \
-                -mcmodel=small
-        endif
-    endif
+    override CFLAGS += \
+        $(or $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mcmodel=medlow,-mcode-model),$(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mcmodel=small,-mcode-model))
     # Many cores trap unaligned accesses for the firmware to emulate.
     # Compilers without the flag never make them.
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mstrict-align),1)
-        override CFLAGS += \
-            -mstrict-align
-    endif
+    override CFLAGS += \
+        $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mstrict-align)
     # Keep linker relaxation away from gp, which nothing sets up. Linkers
     # without the flag only use gp if the script defines __global_pointer$.
-    ifeq ($(call LD_HAS_FLAG,--no-relax-gp),1)
-        override LDFLAGS += \
-            -Wl,--no-relax-gp
-    endif
+    override LDFLAGS += \
+        $(call TCH_LINKER_HAS_FLAG,--no-relax-gp)
 endif
 ifeq ($(ARCH),loongarch64)
     # Clang 16 takes the soft float flags but still records the double
     # float ABI, which no linker mixes with soft float objects, so read
     # the ABI out of the ELF header it writes. LTO is turned off for the
     # check, as it would write bitcode with no such header instead.
-    ifeq ($(CC_IS_CLANG),1)
+    ifeq ($(TCH_CC_IS_CLANG),1)
         override CC_FLOAT_ABI := $(shell $(CC) $(CFLAGS) -fno-lto -c -x c /dev/null -o - 2>/dev/null | od -A n -t x1 -j 48 -N 1)
         ifeq ($(filter %1,$(CC_FLOAT_ABI)),)
-            $(call TOOLCHAIN_ERROR,The compiler does not record the soft float ABI)
+            $(error The compiler does not record the soft float ABI)
         endif
     endif
     # Do not go through the GOT for external symbols. Only GCC is checked,
     # as Clang had its flag before the architecture existed.
-    ifeq ($(CC_IS_CLANG),1)
+    ifeq ($(TCH_CC_IS_CLANG),1)
         override CFLAGS += \
             -fdirect-access-external-data
     else
-        ifeq ($(call CC_HAS_COMPILE_FLAG,-mdirect-extern-access),1)
-            override CFLAGS += \
-                -mdirect-extern-access
-        else
-            $(call TOOLCHAIN_ERROR,The compiler cannot keep external data out of the GOT)
-        endif
+        override CFLAGS += \
+            $(call TCH_REQUIRE,$(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mdirect-extern-access),The compiler cannot keep external data out of the GOT)
     endif
     # Clang called this code model "small" before the ISA's own name.
-    ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=normal,-mcode-model),1)
-        override CFLAGS += \
-            -mcmodel=normal
-    else
-        ifeq ($(call CC_HAS_COMPILE_FLAG,-mcmodel=small,-mcode-model),1)
-            override CFLAGS += \
-                -mcmodel=small
-        endif
-    endif
+    override CFLAGS += \
+        $(or $(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mcmodel=normal,-mcode-model),$(call TCH_DRIVER_HAS_COMPILE_FLAG,CC,-mcmodel=small,-mcode-model))
     # Some Clangs do not record the LoongArch ABI in LTO objects, so pass
     # it to LTO if the IR of an empty file does not record it.
-    ifeq ($(CC_IS_CLANG),1)
-        ifeq ($(CFLAGS_HAS_LTO),1)
+    ifeq ($(TCH_CC_IS_CLANG),1)
+        ifeq ($(TCH_CC_LTO),1)
             override CC_LTO_HAS_ABI := $(shell ! $(CC) $(CFLAGS) -S -emit-llvm -x c /dev/null -o - 2>/dev/null | grep -q target-abi; echo $$?)
-
             ifneq ($(CC_LTO_HAS_ABI),1)
                 override LDFLAGS += \
                     -Wl,-plugin-opt=-target-abi=lp64s
@@ -406,17 +263,12 @@ ifeq ($(ARCH),loongarch64)
 endif
 
 # Some compilers link static PIEs even when asked for -static, so pass
-# them -no-pie when linking if they support it.
-ifeq ($(call CC_HAS_LINK_FLAG,-no-pie),1)
-    override LDFLAGS += \
-        -no-pie
-endif
-
-# Tell the linker as well, as the compiler does not always pass this on.
-ifeq ($(call LD_HAS_FLAG,-no-pie),1)
-    override LDFLAGS += \
-        -Wl,-no-pie
-endif
+# them -no-pie when linking if they support it, and tell the linker as
+# well, as the compiler does not always pass this on.
+override LDFLAGS += \
+    $(call TCH_DRIVER_HAS_LINK_FLAG,-no-pie)
+override LDFLAGS += \
+    $(call TCH_LINKER_HAS_FLAG,-no-pie)
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree
 # (except the src/arch/* directories, as those are gonna be added
@@ -443,24 +295,14 @@ all: bin-$(ARCH)/$(OUTPUT)
 -include $(HEADER_DEPS)
 
 # Each kind of file depends on records of the variables it is built with,
-# named after them. Each record gets its variable as set here, as target
-# specific values, like the -fno-lto below, would otherwise reach it
-# through the files depending on it.
-override VARSFILES := $(addprefix obj-$(ARCH)/,CC CFLAGS CPPFLAGS LDFLAGS)
+# named after them, which the toolchain helper remakes when they change.
+override TCH_RECORDS := $(addprefix obj-$(ARCH)/,CC CFLAGS CPPFLAGS LDFLAGS)
 ifeq ($(ARCH),x86_64)
-override VARSFILES += obj-$(ARCH)/NASMFLAGS
+override TCH_RECORDS += obj-$(ARCH)/NASMFLAGS
 endif
-$(foreach f,$(VARSFILES),$(eval $(f): override $(notdir $(f)) := $$($(notdir $(f)))))
-
-# Remake the records that differ, compared here rather than by a recipe run
-# every time, so that make can still tell when there is nothing to be done.
-override CHANGED_VARSFILES := $(foreach f,$(VARSFILES),$(shell printf '%s\n' '$(subst ','\'',$($(notdir $(f))))' | cmp -s - $(f) 2>/dev/null || echo $(f)))
-.PHONY: FORCE
-FORCE:
-$(CHANGED_VARSFILES): FORCE
-$(VARSFILES):
-	@mkdir -p "$(dir $@)"
-	@printf '%s\n' '$(subst ','\'',$($(notdir $@)))' > $@
+ifneq ($(BUILD_GOALS),)
+    include gmake-toolchain-helper/records.mk
+endif
 
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile obj-$(ARCH)/CC obj-$(ARCH)/CFLAGS obj-$(ARCH)/LDFLAGS linker-scripts/$(ARCH).lds $(OBJ)
@@ -496,7 +338,7 @@ clean:
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean
 distclean:
-	rm -rf bin-* obj-* .deps-obtained .cache compile_commands.json freestanding-c-hdrs freestanding-lgrt limine-protocol
+	rm -rf bin-* obj-* .deps-obtained .cache compile_commands.json freestanding-c-hdrs freestanding-lgrt gmake-toolchain-helper limine-protocol
 
 # Install the final built executable to its final on-root location. Not
 # install(1), which takes other arguments on illumos and Solaris.

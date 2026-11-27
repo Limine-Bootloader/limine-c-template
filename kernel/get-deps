@@ -52,6 +52,11 @@ clone_repo_commit \
     fbc37e3babf39f464e6f49401e25bab71cc7f938
 
 clone_repo_commit \
+    https://github.com/osdev0/gmake-toolchain-helper.git \
+    gmake-toolchain-helper \
+    4ca08736be746ee7ccb2c42959144afd99a02434
+
+clone_repo_commit \
     https://github.com/Limine-Bootloader/limine-protocol.git \
     limine-protocol \
     877c2d4c50e170575f8b8e7fbf7b8fa89b1dc157
